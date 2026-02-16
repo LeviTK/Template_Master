@@ -1,3 +1,5 @@
+import os
+
 from calibre.gui2.actions import InterfaceAction
 from calibre.gui2 import error_dialog, info_dialog
 
@@ -10,15 +12,12 @@ from calibre_plugins.epub_template_master.dialogs import (
     MainActionDialog,
     TemplateSelectDialog,
 )
-from calibre_plugins.epub_template_master.logic import (
-    create_book_from_template,
-    apply_template_to_book,
-    duplicate_book,
-)
 from calibre_plugins.epub_template_master.config import (
     get_default_template,
+    get_duplicate_all_formats,
     get_template_path,
 )
+from calibre_plugins.epub_template_master.services.template_service import TemplateService
 
 
 class EPUBTemplateMasterAction(InterfaceAction):
@@ -26,6 +25,7 @@ class EPUBTemplateMasterAction(InterfaceAction):
     action_spec = ("EPUB Template Master", None, "EPUB 模板管理", None)
 
     def genesis(self):
+        self.template_service = TemplateService()
         self.qaction.setText("EPUB Master")
 
         m = QMenu()
@@ -61,13 +61,18 @@ class EPUBTemplateMasterAction(InterfaceAction):
         default = get_default_template()
         if default:
             path = get_template_path(default)
-            if path:
+            if path and os.path.exists(path):
                 return path
 
         d = TemplateSelectDialog(self.gui)
         if d.exec_() == QDialog.Accepted:
             return d.get_selected_template()
         return None
+
+    def _service(self):
+        if not hasattr(self, "template_service"):
+            self.template_service = TemplateService()
+        return self.template_service
 
     def do_create_book(self, template_override=None):
         """从模板创建新书籍"""
@@ -76,7 +81,7 @@ class EPUBTemplateMasterAction(InterfaceAction):
             return
 
         db = self.gui.current_db
-        book_id = create_book_from_template(db, template_path)
+        book_id = self._service().create_from_template(db, template_path)
 
         if book_id:
             self.refresh_gui([book_id], added=True)
@@ -111,25 +116,24 @@ class EPUBTemplateMasterAction(InterfaceAction):
         pd.setMinimumDuration(0)
         pd.show()
 
-        results = []  # list of (title, success, message)
-
-        for i, book_id in enumerate(ids):
-            if pd.wasCanceled():
-                break
-
-            title = db.title(book_id, index_is_id=True)
+        def on_progress(i, title):
             pd.setValue(i)
             pd.setLabelText(f"处理: {title}")
-
             # processEvents 确保界面不卡死
             QApplication.processEvents()
 
-            success, msg = apply_template_to_book(db, book_id, template_path)
-            results.append((title, success, msg))
+        results = self._service().apply_template_to_books(
+            db,
+            ids,
+            template_path,
+            progress_callback=on_progress,
+            is_cancelled=pd.wasCanceled,
+        )
 
         pd.setValue(len(ids))
 
-        self.refresh_gui(ids, added=False)
+        processed_ids = ids[: len(results)]
+        self.refresh_gui(processed_ids, added=False)
 
         # 生成报告
         success_count = sum(1 for r in results if r[1])
@@ -166,26 +170,21 @@ class EPUBTemplateMasterAction(InterfaceAction):
         pd.setWindowModality(Qt.WindowModal)
         pd.show()
 
-        count = 0
-        new_ids = []
-        errors = []
-
-        for i, book_id in enumerate(ids):
-            if pd.wasCanceled():
-                break
-
-            title = db.title(book_id, index_is_id=True)
+        def on_progress(i, title):
             pd.setValue(i)
             pd.setLabelText(f"复制: {title}")
-
             QApplication.processEvents()
 
-            res = duplicate_book(db, book_id)
-            if res.get("success"):
-                count += 1
-                new_ids.append(res["new_id"])
-            else:
-                errors.append(f"{title}: {res.get('message', 'Unknown error')}")
+        result = self._service().duplicate_books(
+            db,
+            ids,
+            duplicate_all_formats=get_duplicate_all_formats(),
+            progress_callback=on_progress,
+            is_cancelled=pd.wasCanceled,
+        )
+        count = result["count"]
+        new_ids = result["new_ids"]
+        errors = result["errors"]
 
         pd.setValue(len(ids))
 

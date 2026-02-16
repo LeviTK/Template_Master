@@ -3,11 +3,9 @@ try:
         QWidget,
         QVBoxLayout,
         QLabel,
-        QLineEdit,
         QPushButton,
         QFileDialog,
         QDialog,
-        QListWidget,
         QHBoxLayout,
         QMessageBox,
         QTableWidget,
@@ -15,9 +13,7 @@ try:
         QHeaderView,
         QAbstractItemView,
         QInputDialog,
-        QListWidgetItem,
         Qt,
-        QFont,
         QCheckBox,
         QGroupBox,
     )
@@ -26,11 +22,9 @@ except ImportError:
         QWidget,
         QVBoxLayout,
         QLabel,
-        QLineEdit,
         QPushButton,
         QFileDialog,
         QDialog,
-        QListWidget,
         QHBoxLayout,
         QMessageBox,
         QTableWidget,
@@ -38,9 +32,7 @@ except ImportError:
         QHeaderView,
         QAbstractItemView,
         QInputDialog,
-        QListWidgetItem,
         Qt,
-        QFont,
         QCheckBox,
         QGroupBox,
     )
@@ -50,10 +42,7 @@ from calibre_plugins.epub_template_master.config import (
     set_templates,
     get_default_template,
     set_default_template,
-    add_template,
-    remove_template,
     get_template_path,
-    get_template_dir,
     get_duplicate_all_formats,
     set_duplicate_all_formats,
 )
@@ -68,6 +57,40 @@ try:
     HEADER_STRETCH = QHeaderView.ResizeMode.Stretch
 except AttributeError:
     HEADER_STRETCH = QHeaderView.Stretch
+
+
+def _populate_template_table(
+    table,
+    templates,
+    default_filename,
+    include_note=False,
+    default_text="★",
+):
+    """将模板数据填充到表格，复用两处对话框中的相同渲染逻辑。"""
+    table.setRowCount(0)
+    for tpl in templates:
+        row = table.rowCount()
+        table.insertRow(row)
+
+        name_item = QTableWidgetItem(tpl["name"])
+        name_item.setData(Qt.UserRole, tpl["filename"])
+        table.setItem(row, 0, name_item)
+
+        default_col = 1
+        if include_note:
+            note_item = QTableWidgetItem(tpl.get("note", ""))
+            table.setItem(row, 1, note_item)
+            default_col = 2
+
+        is_default = tpl["filename"] == default_filename
+        default_item = QTableWidgetItem(default_text if is_default else "")
+        default_item.setTextAlignment(Qt.AlignCenter)
+        if is_default:
+            font = default_item.font()
+            font.setBold(True)
+            default_item.setFont(font)
+        table.setItem(row, default_col, default_item)
+
 
 # --- 设置面板 (模板管理) ---
 
@@ -131,30 +154,15 @@ class ConfigWidget(QWidget):
         self.load_templates()
 
     def load_templates(self):
-        self.table.setRowCount(0)
         templates = get_templates()
         default = get_default_template()
-
-        for tpl in templates:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-
-            name_item = QTableWidgetItem(tpl["name"])
-            name_item.setData(Qt.UserRole, tpl["filename"])
-            self.table.setItem(row, 0, name_item)
-
-            note = tpl.get("note", "")
-            note_item = QTableWidgetItem(note)
-            self.table.setItem(row, 1, note_item)
-
-            is_default = tpl["filename"] == default
-            default_item = QTableWidgetItem("★" if is_default else "")
-            default_item.setTextAlignment(Qt.AlignCenter)
-            if is_default:
-                font = default_item.font()
-                font.setBold(True)
-                default_item.setFont(font)
-            self.table.setItem(row, 2, default_item)
+        _populate_template_table(
+            self.table,
+            templates,
+            default,
+            include_note=True,
+            default_text="★",
+        )
 
     def get_selected_filenames(self):
         filenames = []
@@ -427,11 +435,11 @@ class TemplateSelectDialog(QDialog):
         self.load_templates()
 
     def load_templates(self):
-        self.table.setRowCount(0)
         templates = get_templates()
         default = get_default_template()
 
         if not templates:
+            self.table.setRowCount(0)
             self.table.setVisible(False)
             self.empty_label.setVisible(True)
             self.ok_btn.setEnabled(False)
@@ -440,29 +448,22 @@ class TemplateSelectDialog(QDialog):
         self.table.setVisible(True)
         self.empty_label.setVisible(False)
         self.ok_btn.setEnabled(True)
+        _populate_template_table(
+            self.table,
+            templates,
+            default,
+            include_note=False,
+            default_text="★ 默认",
+        )
 
-        for tpl in templates:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-
-            name_item = QTableWidgetItem(tpl["name"])
-            name_item.setData(Qt.UserRole, tpl["filename"])
-            self.table.setItem(row, 0, name_item)
-
-            is_default = tpl["filename"] == default
-            default_item = QTableWidgetItem("★ 默认" if is_default else "")
-            if is_default:
-                font = default_item.font()
-                font.setBold(True)
-                default_item.setFont(font)
-            self.table.setItem(row, 1, default_item)
-
+        selected = False
         if default:
             for row in range(self.table.rowCount()):
                 if self.table.item(row, 0).data(Qt.UserRole) == default:
                     self.table.selectRow(row)
+                    selected = True
                     break
-        elif self.table.rowCount() > 0:
+        if not selected and self.table.rowCount() > 0:
             self.table.selectRow(0)
 
     def get_selected_template(self):

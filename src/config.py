@@ -35,6 +35,11 @@ def set_default_template(filename):
 def add_template(name, filename):
     """Add a template to the list."""
     templates = get_templates()
+    for tpl in templates:
+        if tpl.get('filename') == filename:
+            tpl['name'] = name
+            set_templates(templates)
+            return
     templates.append({'name': name, 'filename': filename})
     set_templates(templates)
 
